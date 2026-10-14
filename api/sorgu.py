@@ -3,29 +3,53 @@ from urllib.parse import urlparse, parse_qs
 import json
 import os
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "kayitlar.json")
+# azeri.txt yolu (repo kökünde)
+TXT_PATH = os.path.join(os.path.dirname(__file__), "..", "azeri.txt")
 _CACHE = None
 
 # ==================== API KEY ====================
 ADMIN_KEY = "YxceBerkk-Azeri-Gizli-2026"
 
-# İstatistik ve admin endpoint'leri için gerekli
 
-
-def db_yukle():
+def txt_yukle():
+    """azeri.txt dosyasını okur, kayıt listesi döner."""
     global _CACHE
-    if _CACHE is None:
-        try:
-            with open(DB_PATH, "r", encoding="utf-8") as f:
-                _CACHE = json.load(f)
-        except Exception:
-            _CACHE = []
-    return _CACHE
+    if _CACHE is not None:
+        return _CACHE
+
+    kayitlar = []
+    try:
+        with open(TXT_PATH, "r", encoding="utf-8", errors="replace") as f:
+            for satir in f:
+                satir = satir.strip()
+                if not satir:
+                    continue
+                parcalar = satir.split(":")
+                if len(parcalar) < 5:
+                    continue
+
+                kayit = {
+                    "telefon": parcalar[0].strip(),
+                    "tc": parcalar[1].strip(),
+                    "ad": parcalar[2].strip(),
+                    "soyad": parcalar[3].strip(),
+                    "cinsiyet": parcalar[4].strip() if len(parcalar) > 4 else "",
+                    "dogum_yeri": parcalar[5].strip() if len(parcalar) > 5 else "",
+                    "medeni": parcalar[7].strip() if len(parcalar) > 7 else "",
+                    "dogum_tarihi": parcalar[8].strip() if len(parcalar) > 8 else "",
+                }
+                kayitlar.append(kayit)
+    except Exception as e:
+        print(f"TXT okuma hatası: {e}")
+
+    _CACHE = kayitlar
+    return kayitlar
 
 
-def db_sorgula(tc=None, numara=None, ad=None, soyad=None):
-    kayitlar = db_yukle()
+def db_sorgula(tc=None, numara=None, ad=None, soyad=None, limit=100):
+    kayitlar = txt_yukle()
     sonuclar = []
+
     for k in kayitlar:
         eslesme = True
         if tc and str(k.get("tc", "")).strip() != str(tc).strip():
@@ -47,8 +71,9 @@ def db_sorgula(tc=None, numara=None, ad=None, soyad=None):
                 eslesme = False
         if eslesme:
             sonuclar.append(k)
-            if len(sonuclar) >= 100:
+            if len(sonuclar) >= limit:
                 break
+
     return sonuclar
 
 
@@ -71,18 +96,13 @@ class handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
 
-        # ==================== İSTATİSTİK (ADMIN) ====================
+        # İSTATİSTİK (ADMIN)
         if yol == "/istatistik":
             key = p("key") or self.headers.get("X-API-Key", "")
             if key != ADMIN_KEY:
-                js({
-                    "_imza": "YxceBerkkAzeriApi",
-                    "hata": "Yetkisiz erişim",
-                    "kod": 403
-                }, 403)
+                js({"_imza": "YxceBerkkAzeriApi", "hata": "Yetkisiz"}, 403)
                 return
-
-            kayitlar = db_yukle()
+            kayitlar = txt_yukle()
             js({
                 "_imza": "YxceBerkkAzeriApi",
                 "toplam_kayit": len(kayitlar),
@@ -90,20 +110,18 @@ class handler(BaseHTTPRequestHandler):
             })
             return
 
-        # ==================== ADMIN: TÜM VERİ ====================
+        # ADMIN: TÜM VERİ
         if yol == "/admin/tum":
             key = p("key") or self.headers.get("X-API-Key", "")
             if key != ADMIN_KEY:
                 js({"_imza": "YxceBerkkAzeriApi", "hata": "Yetkisiz"}, 403)
                 return
-
-            kayitlar = db_yukle()
+            kayitlar = txt_yukle()
             limit = p("limit")
             try:
                 limit_int = int(limit) if limit else 100
             except:
                 limit_int = 100
-
             js({
                 "_imza": "YxceBerkkAzeriApi",
                 "toplam": len(kayitlar),
@@ -112,52 +130,19 @@ class handler(BaseHTTPRequestHandler):
             })
             return
 
-        # ==================== İSTATİSTİK DETAY ====================
-        if yol == "/admin/istatistik":
-            key = p("key") or self.headers.get("X-API-Key", "")
-            if key != ADMIN_KEY:
-                js({"_imza": "YxceBerkkAzeriApi", "hata": "Yetkisiz"}, 403)
-                return
-
-            kayitlar = db_yukle()
-
-            # Cinsiyet dağılımı
-            cinsiyet = {}
-            medeni = {}
-            dogum_yeri = {}
-
-            for k in kayitlar:
-                c = k.get("cinsiyet", "bilinmiyor") or "bilinmiyor"
-                cinsiyet[c] = cinsiyet.get(c, 0) + 1
-
-                m = k.get("medeni", "bilinmiyor") or "bilinmiyor"
-                medeni[m] = medeni.get(m, 0) + 1
-
-                dy = k.get("dogum_yeri", "bilinmiyor") or "bilinmiyor"
-                dogum_yeri[dy] = dogum_yeri.get(dy, 0) + 1
-
-            js({
-                "_imza": "YxceBerkkAzeriApi",
-                "toplam_kayit": len(kayitlar),
-                "cinsiyet": cinsiyet,
-                "medeni": medeni,
-                "dogum_yeri_top10": sorted(dogum_yeri.items(), key=lambda x: -x[1])[:10]
-            })
-            return
-
-        # ==================== PUBLIC SORGU ====================
+        # PUBLIC SORGU
         if yol in ("/", "/api/sorgu", "/sorgu"):
             tc = p("tc")
             numara = p("numara")
             ad = p("ad")
             soyad = p("soyad")
 
-            # Sorgu yoksa → bilgi ver, ama sadece public endpoint'i söyle
             if not any([tc, numara, ad, soyad]):
+                kayitlar = txt_yukle()
                 js({
                     "_imza": "YxceBerkkAzeriApi",
                     "mesaj": "Azeri Sorgu API calisiyor",
-                    "toplam_kayit": len(db_yukle()),
+                    "toplam_kayit": len(kayitlar),
                     "kullanim": {
                         "tc": "/api/sorgu?tc=100028349722094",
                         "numara": "/api/sorgu?numara=994552014875",
@@ -175,12 +160,7 @@ class handler(BaseHTTPRequestHandler):
             })
             return
 
-        # ==================== 404 ====================
-        js({
-            "_imza": "YxceBerkkAzeriApi",
-            "hata": "Endpoint bulunamadi",
-            "public_endpointler": ["/api/sorgu?tc=...", "/api/sorgu?ad=...", "/api/sorgu?numara=..."]
-        }, 404)
+        js({"_imza": "YxceBerkkAzeriApi", "hata": "Endpoint yok"}, 404)
 
     def do_OPTIONS(self):
         self.send_response(200)

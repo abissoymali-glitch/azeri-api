@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "builds": [{"src": "api/sorgu.py", "use": "@vercel/python"}],
+  "routes": [
+    {"src": "/api/sorgu", "dest": "api/sorgu.py"},
+    {"src": "/sorgu", "dest": "api/sorgu.py"},
+    {"src": "/istatistik", "dest": "api/sorgu.py"},
+    {"src": "/admin/tum", "dest": "api/sorgu.py"},
+    {"src": "/admin/istatistik", "dest": "api/sorgu.py"},
+    {"src": "/(.*)", "dest": "api/sorgu.py"}
+  ]
+}
